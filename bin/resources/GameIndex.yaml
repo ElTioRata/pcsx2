@@ -7460,6 +7460,8 @@ SLAJ-25052:
 SLAJ-25053:
   name: "Burnout 3 - Takedown"
   region: "NTSC-Unk"
+  gsHWFixes:
+    halfPixelOffset: 2  
   clampModes:
     vuClampMode: 0  # Fixes buggy lighting on certain objects.
 SLAJ-25055:
@@ -12878,12 +12880,16 @@ SLES-52581:
 SLES-52584:
   name: "Burnout 3 - Takedown"
   region: "PAL-M4"
+  gsHWFixes:
+    halfPixelOffset: 2  
   compat: 5
   clampModes:
     vuClampMode: 0  # Fixes buggy lighting on certain objects.
 SLES-52585:
   name: "Burnout 3 - Takedown"
   region: "PAL-F-G-I"
+  gsHWFixes:
+    halfPixelOffset: 2  
   clampModes:
     vuClampMode: 0  # Fixes buggy lighting on certain objects.
 SLES-52587:
@@ -38497,6 +38503,8 @@ SLUS-21049:
 SLUS-21050:
   name: "Burnout 3 - Takedown"
   region: "NTSC-U"
+  gsHWFixes:
+    halfPixelOffset: 2
   compat: 5
   clampModes:
     vuClampMode: 0  # Fixes buggy lighting on certain objects.
