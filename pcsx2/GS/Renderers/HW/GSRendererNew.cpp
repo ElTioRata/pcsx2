@@ -567,14 +567,25 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 	// Blending doesn't require barrier, or sampling of the rt
 	const bool blend_non_recursive = !!(blend_flag & BLEND_NO_REC);
 
-	// BLEND MIX selection, use a mix of hw/sw blending
-	const bool blend_mix1 = !!(blend_flag & BLEND_MIX1);
-	const bool blend_mix2 = !!(blend_flag & BLEND_MIX2);
-	const bool blend_mix3 = !!(blend_flag & BLEND_MIX3);
-	bool blend_mix = (blend_mix1 || blend_mix2 || blend_mix3);
-
-	const bool alpha_c2_high_one = (ALPHA.C == 2 && ALPHA.FIX > 128u);
+	const bool alpha_c0_zero = (ALPHA.C == 0 && GetAlphaMinMax().max == 0);
+	const bool alpha_c0_one = (ALPHA.C == 0 && (GetAlphaMinMax().min == 128) && (GetAlphaMinMax().max == 128));
 	const bool alpha_c0_high_max_one = (ALPHA.C == 0 && GetAlphaMinMax().max > 128);
+	const bool alpha_c2_zero = (ALPHA.C == 2 && ALPHA.FIX == 0u);
+	const bool alpha_c2_one = (ALPHA.C == 2 && ALPHA.FIX == 128u);
+	const bool alpha_c2_high_one = (ALPHA.C == 2 && ALPHA.FIX > 128u);
+
+	// BLEND MIX HW/SW selection, use a mix of hw/sw blending
+	const bool blend_mix1_hw_sw = !!(blend_flag & BLEND_MIX1);
+	const bool blend_mix2_hw_sw = !!(blend_flag & BLEND_MIX2);
+	const bool blend_mix3_hw_sw = !!(blend_flag & BLEND_MIX3);
+	bool blend_mix_hw_sw = (blend_mix1_hw_sw || blend_mix2_hw_sw || blend_mix3_hw_sw);
+
+	// BLEND MIX SW selection, blend can be done in sw
+	const bool blend_mix1_sw = blend_mix1_hw_sw &&
+		((ALPHA.D == 2 && (alpha_c0_zero || alpha_c2_zero)) || (ALPHA.B == ALPHA.D && (alpha_c0_one || alpha_c2_one)));
+	const bool blend_mix2_sw = blend_mix2_hw_sw && (alpha_c0_zero || alpha_c2_zero);
+	const bool blend_mix3_sw = blend_mix3_hw_sw && (alpha_c0_zero || alpha_c2_zero);
+	const bool blend_mix_sw = (blend_mix1_sw || blend_mix2_sw || blend_mix3_sw);
 
 	// Blend can be done on hw. As and F cases should be accurate.
 	// BLEND_C_CLR1 with Ad, BLEND_C_CLR3  Cs > 0.5f will require sw blend.
@@ -598,6 +609,7 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 		// SW Blend is (nearly) free. Let's use it.
 		const bool impossible_or_free_blend = (blend_flag & BLEND_A_MAX) // Impossible blending
 			|| blend_non_recursive                 // Free sw blending, doesn't require barriers or reading fb
+			|| blend_mix_sw
 			|| accumulation_blend                  // Mix of hw/sw blending
 			|| (m_prim_overlap == PRIM_OVERLAP_NO) // Blend can be done in a single draw
 			|| (m_conf.require_full_barrier);      // Another effect (for example fbmask) already requires a full barrier
@@ -630,11 +642,11 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 				sw_blending |= impossible_or_free_blend;
 				// Try to do hw blend for clr2 case.
 				sw_blending &= !clr_blend1_2;
-				// Do not run BLEND MIX if sw blending is already present, it's less accurate
-				blend_mix &= !sw_blending;
-				sw_blending |= blend_mix;
-				// Disable dithering on blend mix.
-				m_conf.ps.dither &= !blend_mix;
+				// Do not run BLEND MIX HW/SW if sw blending is already present, it's less accurate
+				blend_mix_hw_sw &= !sw_blending;
+				sw_blending |= blend_mix_hw_sw;
+				// Disable dithering on blend mix hw/sw.
+				m_conf.ps.dither &= !blend_mix_hw_sw;
 				[[fallthrough]];
 			case AccBlendLevel::Minimum:
 				break;
@@ -655,10 +667,10 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 				}
 				[[fallthrough]];
 			case AccBlendLevel::Full:
-				sw_blending |= ((ALPHA.C == 1 || (blend_mix && (alpha_c2_high_one || alpha_c0_high_max_one))) && (m_prim_overlap == PRIM_OVERLAP_NO));
+				sw_blending |= ((ALPHA.C == 1 || (blend_mix_hw_sw && (alpha_c2_high_one || alpha_c0_high_max_one))) && (m_prim_overlap == PRIM_OVERLAP_NO));
 				[[fallthrough]];
 			case AccBlendLevel::High:
-				sw_blending |= (!(clr_blend || blend_mix) && (m_prim_overlap == PRIM_OVERLAP_NO));
+				sw_blending |= (!(clr_blend || blend_mix_hw_sw) && (m_prim_overlap == PRIM_OVERLAP_NO));
 				[[fallthrough]];
 			case AccBlendLevel::Medium:
 				// If prims don't overlap prefer full sw blend on blend_ad_alpha_masked cases.
@@ -672,14 +684,14 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 				// Disable accumulation blend when there is fbmask with no overlap, will be faster.
 				color_dest_blend   &= !fbmask_no_overlap;
 				accumulation_blend &= !fbmask_no_overlap;
-				sw_blending |= accumulation_blend || blend_non_recursive || fbmask_no_overlap;
+				sw_blending |= accumulation_blend || blend_non_recursive || blend_mix_sw || fbmask_no_overlap;
 				// Try to do hw blend for clr2 case.
 				sw_blending &= !clr_blend1_2;
-				// Do not run BLEND MIX if sw blending is already present, it's less accurate
-				blend_mix &= !sw_blending;
-				sw_blending |= blend_mix;
-				// Disable dithering on blend mix.
-				m_conf.ps.dither &= !blend_mix;
+				// Do not run BLEND MIX HW/SW if sw blending is already present, it's less accurate
+				blend_mix_hw_sw &= !sw_blending;
+				sw_blending |= blend_mix_hw_sw;
+				// Disable dithering on blend mix hw/sw.
+				m_conf.ps.dither &= !blend_mix_hw_sw;
 				[[fallthrough]];
 			case AccBlendLevel::Minimum:
 				break;
@@ -691,9 +703,9 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 	{
 		bool free_colclip = false;
 		if (g_gs_device->Features().texture_barrier)
-			free_colclip = m_prim_overlap == PRIM_OVERLAP_NO || blend_non_recursive;
+			free_colclip = m_prim_overlap == PRIM_OVERLAP_NO || blend_non_recursive || blend_mix_sw;
 		else
-			free_colclip = blend_non_recursive;
+			free_colclip = blend_non_recursive || blend_mix_sw;
 
 		GL_DBG("COLCLIP Info (Blending: %u/%u/%u/%u, OVERLAP: %d)", ALPHA.A, ALPHA.B, ALPHA.C, ALPHA.D, m_prim_overlap);
 		if (color_dest_blend)
@@ -709,9 +721,9 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 			sw_blending        = true;
 			// Disable the HDR algo
 			accumulation_blend = false;
-			blend_mix          = false;
+			blend_mix_hw_sw    = false;
 		}
-		else if (accumulation_blend || blend_mix)
+		else if (accumulation_blend || blend_mix_hw_sw)
 		{
 			// A fast algo that requires 2 passes
 			GL_INS("COLCLIP Fast HDR mode ENABLED");
@@ -744,7 +756,7 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 				// Disable hw/sw blend and do pure sw blend with reading the framebuffer.
 				color_dest_blend   = false;
 				accumulation_blend = false;
-				blend_mix          = false;
+				blend_mix_hw_sw    = false;
 				m_conf.ps.pabe     = 1;
 
 				// HDR mode should be disabled when doing sw blend, swap with sw colclip.
@@ -756,7 +768,7 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 			}
 			else
 			{
-				m_conf.ps.pabe = !(accumulation_blend || blend_mix);
+				m_conf.ps.pabe = !(accumulation_blend || blend_mix_hw_sw);
 			}
 		}
 		else if (ALPHA.A == 0 && ALPHA.B == 1 && ALPHA.C == 0 && ALPHA.D == 1)
@@ -822,24 +834,27 @@ void GSRendererNew::EmulateBlending(bool& DATE_PRIMID, bool& DATE_BARRIER)
 			// Only Ad case will require one barrier
 			m_conf.require_one_barrier |= blend_ad_alpha_masked;
 		}
-		else if (blend_mix)
+		else if (blend_mix_sw || blend_mix_hw_sw)
 		{
-			m_conf.blend = {blend_index, ALPHA.FIX, m_conf.ps.blend_c == 2, false, true};
-			m_conf.ps.blend_mix = 1;
+			if (blend_mix_hw_sw)
+			{
+				m_conf.blend = {blend_index, ALPHA.FIX, m_conf.ps.blend_c == 2, false, true};
+				m_conf.ps.blend_mix = 1;
+			}
 
-			if (blend_mix1)
+			if (blend_mix1_sw || blend_mix1_hw_sw)
 			{
 				m_conf.ps.blend_a = 0;
 				m_conf.ps.blend_b = 2;
 				m_conf.ps.blend_d = 2;
 			}
-			else if (blend_mix2)
+			else if (blend_mix2_sw || blend_mix2_hw_sw)
 			{
 				m_conf.ps.blend_a = 0;
 				m_conf.ps.blend_b = 2;
 				m_conf.ps.blend_d = 0;
 			}
-			else if (blend_mix3)
+			else if (blend_mix3_sw || blend_mix3_hw_sw)
 			{
 				m_conf.ps.blend_a = 2;
 				m_conf.ps.blend_b = 0;
